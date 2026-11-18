@@ -1,0 +1,483 @@
+-- Đặt LocalScript này tại: ServerStorage.AdminClient
+-- (Server sẽ tự động nhân bản vào PlayerGui nếu bạn là Admin)
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local localPlayer = Players.LocalPlayer
+local playerGui = localPlayer:WaitForChild("PlayerGui")
+local camera = workspace.CurrentCamera
+local adminEvent = ReplicatedStorage:WaitForChild("AdminActionEvent")
+
+-- ==========================================
+-- CẤU HÌNH MẶC ĐỊNH
+-- ==========================================
+local CONFIG = {
+	MENU_TOGGLE_KEY = Enum.KeyCode.RightShift, -- Phím ẩn/hiện bảng Admin
+	CAMLOCK_KEY = Enum.KeyCode.Q,              -- Phím khóa/nhả mục tiêu CamLock
+	CAMLOCK_SMOOTHNESS = 0.25,                 -- Độ mượt CamLock (0.1 = rất mượt, 1 = dính cứng)
+	AIMBOT_SKILL_RANGE = 250,                  -- Tầm quét mục tiêu cho Aimbot Skill (studs)
+	TWEEN_SPEED = 80,                          -- Tốc độ lướt Tween Speed (studs/giây)
+	MIN_TWEEN_SPEED = 20,
+	MAX_TWEEN_SPEED = 250,
+	ESP_MAX_DISTANCE = 500,
+}
+
+-- Trạng thái các tính năng
+local state = {
+	menuVisible = true,
+	espEnabled = false,
+	camLockEnabled = false,
+	camLockTarget = nil :: Player?,
+	aimbotSkillEnabled = false,
+	tweenSpeedEnabled = false,
+}
+
+-- ==========================================
+-- 1. TỰ ĐỘNG TẠO BẢNG ĐIỀU KHIỂN ADMIN UI
+-- ==========================================
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "AdminControlPanelGui"
+screenGui.ResetOnSpawn = false -- Không bị mất UI khi nhân vật chết
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+screenGui.Parent = playerGui
+
+local mainFrame = Instance.new("Frame")
+mainFrame.Name = "MainFrame"
+mainFrame.Size = UDim2.fromOffset(250, 295)
+mainFrame.Position = UDim2.new(0, 20, 0.5, -145)
+mainFrame.BackgroundColor3 = Color3.fromRGB(24, 26, 32)
+mainFrame.BorderSizePixel = 0
+mainFrame.Active = true
+mainFrame.Draggable = true -- Cho phép kéo thả bảng điều khiển bằng chuột
+mainFrame.Parent = screenGui
+
+local uiCorner = Instance.new("UICorner")
+uiCorner.CornerRadius = UDim.new(0, 10)
+uiCorner.Parent = mainFrame
+
+local uiStroke = Instance.new("UIStroke")
+uiStroke.Color = Color3.fromRGB(65, 72, 90)
+uiStroke.Thickness = 1.5
+uiStroke.Parent = mainFrame
+
+-- Tiêu đề bảng
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Size = UDim2.new(1, -40, 0, 36)
+titleLabel.Position = UDim2.fromOffset(12, 0)
+titleLabel.BackgroundTransparency = 1
+titleLabel.Text = "ADMIN CONTROL PANEL"
+titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+titleLabel.Font = Enum.Font.GothamBold
+titleLabel.TextSize = 14
+titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+titleLabel.Parent = mainFrame
+
+-- Nút đóng/mở nhanh (góc trên phải bảng)
+local closeBtn = Instance.new("TextButton")
+closeBtn.Size = UDim2.fromOffset(26, 26)
+closeBtn.Position = UDim2.new(1, -32, 0, 5)
+closeBtn.BackgroundColor3 = Color3.fromRGB(45, 48, 58)
+closeBtn.Text = "—"
+closeBtn.TextColor3 = Color3.fromRGB(220, 220, 220)
+closeBtn.Font = Enum.Font.GothamBold
+closeBtn.TextSize = 14
+closeBtn.Parent = mainFrame
+Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 6)
+
+-- Container chứa các nút
+local container = Instance.new("Frame")
+container.Size = UDim2.new(1, -20, 1, -46)
+container.Position = UDim2.fromOffset(10, 40)
+container.BackgroundTransparency = 1
+container.Parent = mainFrame
+
+local listLayout = Instance.new("UIListLayout")
+listLayout.Padding = UDim.new(0, 8)
+listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+listLayout.Parent = container
+
+-- Hàm tiện ích tạo nút Toggle
+local function createToggleButton(text: string, order: number, callback: (boolean) -> ()): TextButton
+	local btn = Instance.new("TextButton")
+	btn.LayoutOrder = order
+	btn.Size = UDim2.new(1, 0, 0, 38)
+	btn.BackgroundColor3 = Color3.fromRGB(38, 42, 52)
+	btn.Text = `{text}: TẮT`
+	btn.TextColor3 = Color3.fromRGB(220, 220, 220)
+	btn.Font = Enum.Font.GothamSemibold
+	btn.TextSize = 13
+	btn.Parent = container
+	Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
+
+	local isOn = false
+	btn.Activated:Connect(function()
+		isOn = not isOn
+		if isOn then
+			btn.BackgroundColor3 = Color3.fromRGB(46, 160, 95)
+			btn.Text = `{text}: BẬT`
+		else
+			btn.BackgroundColor3 = Color3.fromRGB(38, 42, 52)
+			btn.Text = `{text}: TẮT`
+		end
+		callback(isOn)
+	end)
+
+	return btn
+end
+
+-- ==========================================
+-- 2. HÀM TÌM MỤC TIÊU CHUNG (Dùng cho CamLock & Aimbot Skill)
+-- ==========================================
+local function getTargetRoot(player: Player): BasePart?
+	local char = player.Character
+	if not char then return nil end
+	local hum = char:FindFirstChildOfClass("Humanoid")
+	if not hum or hum.Health <= 0 then return nil end
+	return char:FindFirstChild("HumanoidRootPart") :: BasePart?
+end
+
+-- Tìm người chơi gần tâm màn hình (chuột) nhất
+local function getClosestPlayerToCursor(maxRange: number): Player?
+	local mousePos = UserInputService:GetMouseLocation()
+	local myRoot = getTargetRoot(localPlayer)
+	local closestPlayer: Player? = nil
+	local shortestScreenDist = math.huge
+
+	for _, player in ipairs(Players:GetPlayers()) do
+		if player ~= localPlayer then
+			local targetRoot = getTargetRoot(player)
+			if targetRoot then
+				-- Kiểm tra khoảng cách thực tế nếu có yêu cầu
+				if myRoot and maxRange > 0 and (myRoot.Position - targetRoot.Position).Magnitude > maxRange then
+					continue
+				end
+
+				local screenPos, onScreen = camera:WorldToViewportPoint(targetRoot.Position)
+				if onScreen then
+					local distFromCursor = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
+					if distFromCursor < shortestScreenDist then
+						shortestScreenDist = distFromCursor
+						closestPlayer = player
+					end
+				end
+			end
+		end
+	end
+
+	return closestPlayer
+end
+
+-- ==========================================
+-- 3. LOGIC ESP NGƯỜI CHƠI
+-- ==========================================
+local espObjects: { [Player]: { highlight: Highlight?, billboard: BillboardGui?, distLabel: TextLabel? } } = {}
+
+local function clearPlayerESP(player: Player)
+	local data = espObjects[player]
+	if not data then return end
+	if data.highlight then data.highlight:Destroy() end
+	if data.billboard then data.billboard:Destroy() end
+	espObjects[player] = nil
+end
+
+local function createPlayerESP(player: Player)
+	if not state.espEnabled or player == localPlayer then return end
+	clearPlayerESP(player)
+
+	local char = player.Character
+	if not char then return end
+	local head = char:FindFirstChild("Head")
+	if not head then return end
+
+	local color = player.Team and player.TeamColor.Color or Color3.fromRGB(255, 80, 80)
+
+	local highlight = Instance.new("Highlight")
+	highlight.Name = "AdminESP_Highlight"
+	highlight.Adornee = char
+	highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	highlight.FillColor = color
+	highlight.OutlineColor = Color3.new(1, 1, 1)
+	highlight.FillTransparency = 0.65
+	highlight.Parent = char
+
+	local billboard = Instance.new("BillboardGui")
+	billboard.Name = "AdminESP_Tag"
+	billboard.Adornee = head
+	billboard.Size = UDim2.fromOffset(150, 36)
+	billboard.StudsOffset = Vector3.new(0, 2.5, 0)
+	billboard.AlwaysOnTop = true
+	billboard.MaxDistance = CONFIG.ESP_MAX_DISTANCE
+	billboard.Parent = head
+
+	local nameLabel = Instance.new("TextLabel")
+	nameLabel.Size = UDim2.fromScale(1, 0.55)
+	nameLabel.BackgroundTransparency = 1
+	nameLabel.Text = player.DisplayName
+	nameLabel.TextColor3 = color
+	nameLabel.TextStrokeTransparency = 0.2
+	nameLabel.Font = Enum.Font.GothamBold
+	nameLabel.TextScaled = true
+	nameLabel.Parent = billboard
+
+	local distLabel = Instance.new("TextLabel")
+	distLabel.Position = UDim2.fromScale(0, 0.55)
+	distLabel.Size = UDim2.fromScale(1, 0.45)
+	distLabel.BackgroundTransparency = 1
+	distLabel.Text = "0 studs"
+	distLabel.TextColor3 = Color3.fromRGB(230, 230, 230)
+	distLabel.TextStrokeTransparency = 0.3
+	distLabel.Font = Enum.Font.Gotham
+	distLabel.TextScaled = true
+	distLabel.Parent = billboard
+
+	espObjects[player] = {
+		highlight = highlight,
+		billboard = billboard,
+		distLabel = distLabel,
+	}
+end
+
+local function refreshAllESP()
+	for player, _ in pairs(espObjects) do
+		clearPlayerESP(player)
+	end
+	if state.espEnabled then
+		for _, player in ipairs(Players:GetPlayers()) do
+			createPlayerESP(player)
+		end
+	end
+end
+
+Players.PlayerAdded:Connect(function(player)
+	player.CharacterAdded:Connect(function()
+		task.wait(0.2)
+		createPlayerESP(player)
+	end)
+end)
+
+for _, player in ipairs(Players:GetPlayers()) do
+	if player ~= localPlayer then
+		player.CharacterAdded:Connect(function()
+			task.wait(0.2)
+			createPlayerESP(player)
+		end)
+	end
+end
+
+Players.PlayerRemoving:Connect(function(player)
+	clearPlayerESP(player)
+	if state.camLockTarget == player then
+		state.camLockTarget = nil
+	end
+end)
+
+-- ==========================================
+-- 4. TẠO CÁC NÚT TRÊN BẢNG ĐIỀU KHIỂN
+-- ==========================================
+
+-- Nút 1: Player ESP
+createToggleButton("Player ESP", 1, function(enabled)
+	state.espEnabled = enabled
+	refreshAllESP()
+end)
+
+-- Nút 2: CamLock (Khóa bằng phím Q)
+createToggleButton("CamLock [Phím Q]", 2, function(enabled)
+	state.camLockEnabled = enabled
+	if not enabled then
+		state.camLockTarget = nil
+	end
+end)
+
+-- Nút 3: Aimbot Skill (Hỗ trợ xoay hướng & khóa mục tiêu khi tung chiêu)
+createToggleButton("Aimbot Skill", 3, function(enabled)
+	state.aimbotSkillEnabled = enabled
+	if not enabled then
+		localPlayer:SetAttribute("AdminAimTargetPos", nil)
+	end
+end)
+
+-- Nút 4: Tween Speed
+createToggleButton("Tween Speed", 4, function(enabled)
+	state.tweenSpeedEnabled = enabled
+end)
+
+-- Thanh chỉnh tốc độ Tween Speed (+ / -)
+local speedRow = Instance.new("Frame")
+speedRow.LayoutOrder = 5
+speedRow.Size = UDim2.new(1, 0, 0, 36)
+speedRow.BackgroundColor3 = Color3.fromRGB(32, 35, 44)
+speedRow.Parent = container
+Instance.new("UICorner", speedRow).CornerRadius = UDim.new(0, 8)
+
+local speedLabel = Instance.new("TextLabel")
+speedLabel.Size = UDim2.new(1, -80, 1, 0)
+speedLabel.Position = UDim2.fromOffset(10, 0)
+speedLabel.BackgroundTransparency = 1
+speedLabel.Text = `Tốc độ Tween: {CONFIG.TWEEN_SPEED}`
+speedLabel.TextColor3 = Color3.fromRGB(220, 220, 220)
+speedLabel.Font = Enum.Font.Gotham
+speedLabel.TextSize = 13
+speedLabel.TextXAlignment = Enum.TextXAlignment.Left
+speedLabel.Parent = speedRow
+
+local minusBtn = Instance.new("TextButton")
+minusBtn.Size = UDim2.fromOffset(30, 26)
+minusBtn.Position = UDim2.new(1, -68, 0.5, -13)
+minusBtn.BackgroundColor3 = Color3.fromRGB(55, 60, 75)
+minusBtn.Text = "-"
+minusBtn.TextColor3 = Color3.new(1, 1, 1)
+minusBtn.Font = Enum.Font.GothamBold
+minusBtn.TextSize = 16
+minusBtn.Parent = speedRow
+Instance.new("UICorner", minusBtn).CornerRadius = UDim.new(0, 6)
+
+local plusBtn = Instance.new("TextButton")
+plusBtn.Size = UDim2.fromOffset(30, 26)
+plusBtn.Position = UDim2.new(1, -34, 0.5, -13)
+plusBtn.BackgroundColor3 = Color3.fromRGB(55, 60, 75)
+plusBtn.Text = "+"
+plusBtn.TextColor3 = Color3.new(1, 1, 1)
+plusBtn.Font = Enum.Font.GothamBold
+plusBtn.TextSize = 16
+plusBtn.Parent = speedRow
+Instance.new("UICorner", plusBtn).CornerRadius = UDim.new(0, 6)
+
+minusBtn.Activated:Connect(function()
+	CONFIG.TWEEN_SPEED = math.max(CONFIG.MIN_TWEEN_SPEED, CONFIG.TWEEN_SPEED - 20)
+	speedLabel.Text = `Tốc độ Tween: {CONFIG.TWEEN_SPEED}`
+end)
+
+plusBtn.Activated:Connect(function()
+	CONFIG.TWEEN_SPEED = math.min(CONFIG.MAX_TWEEN_SPEED, CONFIG.TWEEN_SPEED + 20)
+	speedLabel.Text = `Tốc độ Tween: {CONFIG.TWEEN_SPEED}`
+end)
+
+-- Ghi chú phím tắt ở dưới cùng
+local hintLabel = Instance.new("TextLabel")
+hintLabel.LayoutOrder = 6
+hintLabel.Size = UDim2.new(1, 0, 0, 20)
+hintLabel.BackgroundTransparency = 1
+hintLabel.Text = "Nhấn RightShift để ẩn/hiện bảng"
+hintLabel.TextColor3 = Color3.fromRGB(140, 145, 160)
+hintLabel.Font = Enum.Font.Gotham
+hintLabel.TextSize = 11
+hintLabel.Parent = container
+
+-- ==========================================
+-- 5. XỬ LÝ PHÍM TẮT & ĐÓNG MỞ MENU
+-- ==========================================
+local function toggleMenu()
+	state.menuVisible = not state.menuVisible
+	mainFrame.Visible = state.menuVisible
+end
+
+closeBtn.Activated:Connect(toggleMenu)
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+	if gameProcessed then return end
+
+	-- Ẩn/hiện bảng Admin
+	if input.KeyCode == CONFIG.MENU_TOGGLE_KEY then
+		toggleMenu()
+		return
+	end
+
+	-- Bật/tắt khóa mục tiêu CamLock bằng phím Q
+	if input.KeyCode == CONFIG.CAMLOCK_KEY and state.camLockEnabled then
+		if state.camLockTarget then
+			state.camLockTarget = nil
+		else
+			state.camLockTarget = getClosestPlayerToCursor(0)
+		end
+	end
+
+	-- Aimbot Skill: Khi bấm chuột trái hoặc phím dùng skill (Z, X, C, V), tự xoay hướng về mục tiêu gần nhất
+	if state.aimbotSkillEnabled then
+		local isSkillInput = input.UserInputType == Enum.UserInputType.MouseButton1
+			or input.KeyCode == Enum.KeyCode.Z
+			or input.KeyCode == Enum.KeyCode.X
+			or input.KeyCode == Enum.KeyCode.C
+			or input.KeyCode == Enum.KeyCode.V
+
+		if isSkillInput then
+			local target = state.camLockTarget or getClosestPlayerToCursor(CONFIG.AIMBOT_SKILL_RANGE)
+			local targetRoot = target and getTargetRoot(target)
+			local myRoot = getTargetRoot(localPlayer)
+
+			if targetRoot and myRoot then
+				-- Lưu vị trí mục tiêu vào Attribute để script Skill trong game của bạn có thể đọc
+				localPlayer:SetAttribute("AdminAimTargetPos", targetRoot.Position)
+
+				-- Xoay mặt nhân vật về phía mục tiêu (giữ nguyên độ cao Y để không bị nghiêng người)
+				local lookAtPos = Vector3.new(targetRoot.Position.X, myRoot.Position.Y, targetRoot.Position.Z)
+				myRoot.CFrame = CFrame.lookAt(myRoot.Position, lookAtPos)
+			end
+		end
+	end
+end)
+
+-- ==========================================
+-- 6. VÒNG LẶP RENDER (CamLock & Tween Speed)
+-- ==========================================
+local activeTween: Tween? = nil
+
+RunService.RenderStepped:Connect(function(dt: number)
+	-- A. Xử lý CamLock mượt
+	if state.camLockEnabled and state.camLockTarget then
+		local targetRoot = getTargetRoot(state.camLockTarget)
+		if targetRoot then
+			local desiredCFrame = CFrame.lookAt(camera.CFrame.Position, targetRoot.Position)
+			camera.CFrame = camera.CFrame:Lerp(desiredCFrame, CONFIG.CAMLOCK_SMOOTHNESS)
+		else
+			-- Mục tiêu đã chết -> nhả khóa
+			state.camLockTarget = nil
+		end
+	end
+
+	-- B. Xử lý Tween Speed khi nhân vật đang di chuyển
+	if state.tweenSpeedEnabled then
+		local char = localPlayer.Character
+		local root = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
+		local hum = char and char:FindFirstChildOfClass("Humanoid")
+
+		if root and hum and hum.Health > 0 and hum.MoveDirection.Magnitude > 0.05 then
+			local moveDir = hum.MoveDirection.Unit
+			local stepDistance = CONFIG.TWEEN_SPEED * dt
+			local targetCFrame = root.CFrame + (moveDir * stepDistance)
+
+			if activeTween then
+				activeTween:Cancel()
+			end
+			activeTween = TweenService:Create(
+				root,
+				TweenInfo.new(dt, Enum.EasingStyle.Linear),
+				{ CFrame = targetCFrame }
+			)
+			activeTween:Play()
+		end
+	end
+end)
+
+-- Cập nhật khoảng cách ESP mỗi 0.1s (tối ưu hiệu năng)
+task.spawn(function()
+	while true do
+		task.wait(0.1)
+		if not state.espEnabled then continue end
+
+		local myRoot = getTargetRoot(localPlayer)
+		if not myRoot then continue end
+
+		for player, data in pairs(espObjects) do
+			local targetRoot = getTargetRoot(player)
+			if targetRoot and data.distLabel then
+				local dist = math.floor((myRoot.Position - targetRoot.Position).Magnitude)
+				data.distLabel.Text = `{dist} studs`
+			end
+		end
+	end
+end)
