@@ -1,0 +1,721 @@
+--[[
+    VANTA // BLOX FRUITS OVERHAUL v2.0
+    - Physics Lock: BodyVelocity Zero-G + Stepped Noclip khi Tween/AutoFarm
+    - Multi-Trigger Combat: Tool:Activate() + VirtualUser + Hitbox Stabilizer
+    - Dynamic Level Questing + Fallback Universal Mob Scanner (Workspace.Enemies & Workspace)
+    - Unlimited Billboard ESP (Players, Mobs, Devil Fruits) + Health & Distance
+    - Cyber-Glass Multi-Tab UI với Animated Pill Switches & Live Status Bar
+]]
+
+-- ================== 1. SERVICES ==================
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+local StarterGui = game:GetService("StarterGui")
+local VirtualUser = game:GetService("VirtualUser")
+local CoreGui = game:GetService("CoreGui")
+
+local LocalPlayer = Players.LocalPlayer
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+
+-- ================== 2. CONFIGURATION & DATA ==================
+local Config = {
+    AutoFarm = false,
+    AutoQuest = false,
+    FastAttack = true,
+    BringMobs = true,
+    AutoStats = false,
+    StatPriority = "Melee",
+    AutoHaki = true,
+    AutoBuy = false,
+    BuyItem = "Black Leg",
+    ESPPlayers = false,
+    ESPMobs = false,
+    ESPFruits = false,
+    TeleportTo = "Start",
+    AutoRaid = false,
+    RaidType = "Flame",
+    AntiAFK = true,
+    HoverHeight = 14,
+    TweenSpeed = 280,
+    FarmRadius = 1500,
+}
+
+local GameData = {
+    Stats = {"Melee", "Defense", "Sword", "Gun", "Demon Fruit"},
+    Raids = {"Flame", "Ice", "Quake", "Dark", "Light", "String", "Rumble", "Magma", "Buddha", "Sand"},
+    BuyItems = {"Black Leg", "Electro", "Fishman Karate", "Dragon Claw", "Superhuman", "Death Step", "Sharkman Karate", "Electric Claw", "Kabucha"},
+    Islands = {
+        ["Start"] = Vector3.new(1050, 20, 1545),
+        ["Jungle"] = Vector3.new(-1600, 40, 150),
+        ["Pirate Village"] = Vector3.new(-1145, 18, 3830),
+        ["Desert"] = Vector3.new(905, 18, 4370),
+        ["Frozen Village"] = Vector3.new(1195, 35, -1215),
+        ["Marine Fortress"] = Vector3.new(-4850, 30, 4260),
+        ["Skylands"] = Vector3.new(-4955, 725, -2620),
+        ["Prison"] = Vector3.new(4870, 20, 735),
+        ["Colosseum"] = Vector3.new(-1430, 20, -2795),
+        ["Magma Village"] = Vector3.new(-5245, 25, 8465),
+        ["Underwater City"] = Vector3.new(61160, 25, 1569),
+        ["Fountain City"] = Vector3.new(5125, 20, 4035),
+    },
+    IslandOrder = {
+        "Start", "Jungle", "Pirate Village", "Desert", "Frozen Village",
+        "Marine Fortress", "Skylands", "Prison", "Colosseum",
+        "Magma Village", "Underwater City", "Fountain City"
+    },
+    -- Bảng Quest tự động theo Level (Sea 1 chuẩn + tự động fallback nếu level cao hơn)
+    Quests = {
+        {MinLv = 1,   MaxLv = 9,   QuestName = "BanditQuest1",  QuestLv = 1, Mob = "Bandit",               NPCPos = Vector3.new(1060, 17, 1547)},
+        {MinLv = 10,  MaxLv = 14,  QuestName = "JungleQuest",   QuestLv = 1, Mob = "Monkey",               NPCPos = Vector3.new(-1602, 37, 152)},
+        {MinLv = 15,  MaxLv = 29,  QuestName = "JungleQuest",   QuestLv = 2, Mob = "Gorilla",              NPCPos = Vector3.new(-1602, 37, 152)},
+        {MinLv = 30,  MaxLv = 39,  QuestName = "BuggyQuest1",   QuestLv = 1, Mob = "Pirate",               NPCPos = Vector3.new(-1140, 5, 3828)},
+        {MinLv = 40,  MaxLv = 59,  QuestName = "BuggyQuest1",   QuestLv = 2, Mob = "Brute",                NPCPos = Vector3.new(-1140, 5, 3828)},
+        {MinLv = 60,  MaxLv = 74,  QuestName = "DesertQuest",   QuestLv = 1, Mob = "Desert Bandit",        NPCPos = Vector3.new(897, 7, 4388)},
+        {MinLv = 75,  MaxLv = 89,  QuestName = "DesertQuest",   QuestLv = 2, Mob = "Desert Officer",       NPCPos = Vector3.new(897, 7, 4388)},
+        {MinLv = 90,  MaxLv = 99,  QuestName = "SnowQuest",     QuestLv = 1, Mob = "Snow Bandit",          NPCPos = Vector3.new(1386, 87, -1297)},
+        {MinLv = 100, MaxLv = 119, QuestName = "SnowQuest",     QuestLv = 2, Mob = "Snowman",              NPCPos = Vector3.new(1386, 87, -1297)},
+        {MinLv = 120, MaxLv = 149, QuestName = "MarineQuest2",  QuestLv = 1, Mob = "Chief Petty Officer",  NPCPos = Vector3.new(-5036, 29, 4325)},
+        {MinLv = 150, MaxLv = 174, QuestName = "SkyQuest",      QuestLv = 1, Mob = "Sky Bandit",           NPCPos = Vector3.new(-4842, 718, -2623)},
+        {MinLv = 175, MaxLv = 189, QuestName = "SkyQuest",      QuestLv = 2, Mob = "Dark Master",          NPCPos = Vector3.new(-4842, 718, -2623)},
+        {MinLv = 190, MaxLv = 209, QuestName = "PrisonerQuest", QuestLv = 1, Mob = "Prisoner",             NPCPos = Vector3.new(5308, 2, 474)},
+        {MinLv = 210, MaxLv = 249, QuestName = "PrisonerQuest", QuestLv = 2, Mob = "Dangerous Prisoner",   NPCPos = Vector3.new(5308, 2, 474)},
+        {MinLv = 250, MaxLv = 299, QuestName = "ColosseumQuest",QuestLv = 1, Mob = "Toga Warrior",         NPCPos = Vector3.new(-1576, 8, -2985)},
+        {MinLv = 300, MaxLv = 324, QuestName = "MagmaQuest",    QuestLv = 1, Mob = "Military Soldier",     NPCPos = Vector3.new(-5316, 12, 8517)},
+        {MinLv = 325, MaxLv = 374, QuestName = "MagmaQuest",    QuestLv = 2, Mob = "Military Spy",         NPCPos = Vector3.new(-5316, 12, 8517)},
+        {MinLv = 375, MaxLv = 399, QuestName = "FishmanQuest",  QuestLv = 1, Mob = "Fishman Warrior",      NPCPos = Vector3.new(61122, 19, 1569)},
+        {MinLv = 400, MaxLv = 449, QuestName = "FishmanQuest",  QuestLv = 2, Mob = "Fishman Commando",     NPCPos = Vector3.new(61122, 19, 1569)},
+        {MinLv = 450, MaxLv = 474, QuestName = "SkyExp1Quest",  QuestLv = 1, Mob = "God's Guard",          NPCPos = Vector3.new(-4721, 845, -1954)},
+        {MinLv = 475, MaxLv = 524, QuestName = "SkyExp1Quest",  QuestLv = 2, Mob = "Shanda",               NPCPos = Vector3.new(-7863, 5545, -379)},
+        {MinLv = 525, MaxLv = 624, QuestName = "SkyExp2Quest",  QuestLv = 1, Mob = "Royal Squad",          NPCPos = Vector3.new(-7904, 5636, -1412)},
+        {MinLv = 625, MaxLv = 700, QuestName = "FountainQuest", QuestLv = 1, Mob = "Galley Pirate",        NPCPos = Vector3.new(5259, 39, 4050)},
+    }
+}
+
+-- ================== 3. RUNTIME STATE ==================
+local Runtime = {
+    Active = true,
+    Connections = {},
+    ESPFolder = nil,
+    ESPItems = {},
+    ActiveTween = nil,
+    IsTeleporting = false,
+    RaidBusy = false,
+    Character = nil,
+    Humanoid = nil,
+    RootPart = nil,
+    ScreenGui = nil,
+    StatusLabel = nil,
+    Timers = {Combat = 0, Aux = 0, ESP = 0}
+}
+
+local function TrackConnection(conn)
+    table.insert(Runtime.Connections, conn)
+    return conn
+end
+
+local function SetStatus(text)
+    if Runtime.StatusLabel then
+        Runtime.StatusLabel.Text = "STATUS // " .. tostring(text)
+    end
+end
+
+local function Notify(title, text, duration)
+    pcall(function()
+        StarterGui:SetCore("SendNotification", {
+            Title = title or "VANTA UI",
+            Text = text or "",
+            Duration = duration or 3
+        })
+    end)
+end
+
+-- ================== 4. CHARACTER & PHYSICS LOCK ==================
+local function SetFlightLock(enabled)
+    local root = Runtime.RootPart
+    if not root then return end
+
+    local bv = root:FindFirstChild("VantaFlightLock")
+    if enabled then
+        if not bv then
+            bv = Instance.new("BodyVelocity")
+            bv.Name = "VantaFlightLock"
+            bv.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+            bv.Velocity = Vector3.zero
+            bv.Parent = root
+        end
+        bv.Velocity = Vector3.zero
+    else
+        if bv then bv:Destroy() end
+    end
+end
+
+local function BindCharacter(char)
+    if not char then return end
+    Runtime.Character = char
+    Runtime.Humanoid = char:WaitForChild("Humanoid", 10)
+    Runtime.RootPart = char:WaitForChild("HumanoidRootPart", 10)
+end
+
+if LocalPlayer.Character then
+    task.spawn(BindCharacter, LocalPlayer.Character)
+end
+TrackConnection(LocalPlayer.CharacterAdded:Connect(BindCharacter))
+
+-- Noclip tự động khi đang AutoFarm hoặc đang Tween dịch chuyển
+TrackConnection(RunService.Stepped:Connect(function()
+    if not Runtime.Active then return end
+    if (Config.AutoFarm or Runtime.IsTeleporting) and Runtime.Character then
+        SetFlightLock(true)
+        for _, part in ipairs(Runtime.Character:GetDescendants()) do
+            if part:IsA("BasePart") and part.CanCollide then
+                part.CanCollide = false
+            end
+        end
+    else
+        SetFlightLock(false)
+    end
+end))
+
+-- ================== 5. CORE HELPERS (MOVEMENT, COMBAT, REMOTES) ==================
+local function GetCommRemote()
+    local remFolder = ReplicatedStorage:FindFirstChild("Remotes")
+    if remFolder and remFolder:FindFirstChild("CommF_") then
+        return remFolder.CommF_
+    end
+    return ReplicatedStorage:FindFirstChild("CommF_")
+end
+
+local function InvokeComm(...)
+    local remote = GetCommRemote()
+    if remote and remote:IsA("RemoteFunction") then
+        local ok, res = pcall(remote.InvokeServer, remote, ...)
+        if ok then return res end
+    end
+    return nil
+end
+
+local function CancelActiveTween()
+    if Runtime.ActiveTween then
+        pcall(function() Runtime.ActiveTween:Cancel() end)
+        Runtime.ActiveTween = nil
+    end
+    Runtime.IsTeleporting = false
+end
+
+local function SmoothTweenTo(targetCFrame, onComplete)
+    local root = Runtime.RootPart
+    local hum = Runtime.Humanoid
+    if not root or not hum or hum.Health <= 0 then return end
+
+    local dist = (root.Position - targetCFrame.Position).Magnitude
+    if dist <= 12 then
+        CancelActiveTween()
+        root.CFrame = targetCFrame
+        if onComplete then onComplete() end
+        return
+    end
+
+    if Runtime.ActiveTween then
+        pcall(function() Runtime.ActiveTween:Cancel() end)
+    end
+
+    -- Nếu khoảng cách gần (< 45 studs), đặt trực tiếp để bám mục tiêu nhanh
+    if dist < 45 and not Runtime.IsTeleporting then
+        root.CFrame = targetCFrame
+        if onComplete then onComplete() end
+        return
+    end
+
+    local duration = math.clamp(dist / Config.TweenSpeed, 0.08, 12)
+    local tween = TweenService:Create(root, TweenInfo.new(duration, Enum.EasingStyle.Linear), {CFrame = targetCFrame})
+    Runtime.ActiveTween = tween
+    tween:Play()
+
+    if onComplete then
+        local conn
+        conn = tween.Completed:Connect(function(state)
+            conn:Disconnect()
+            if state == Enum.PlaybackState.Completed then
+                onComplete()
+            end
+        end)
+    end
+end
+
+local function GetPlayerLevel()
+    local data = LocalPlayer:FindFirstChild("Data")
+    local lv = data and data:FindFirstChild("Level")
+    return (lv and lv.Value) or 1
+end
+
+local function GetBestQuestForLevel()
+    local myLv = GetPlayerLevel()
+    local chosen = GameData.Quests[1]
+    for _, q in ipairs(GameData.Quests) do
+        if myLv >= q.MinLv then
+            chosen = q
+        end
+    end
+    return chosen
+end
+
+local function IsQuestActive()
+    local mainGui = PlayerGui:FindFirstChild("Main")
+    local questFrame = mainGui and mainGui:FindFirstChild("Quest")
+    return questFrame and questFrame.Visible == true
+end
+
+-- Quét quái đa tầng (Ưu tiên Workspace.Enemies -> Quét toàn bộ Workspace nếu game cấu trúc khác)
+local function FindTargetEnemy(preferredName, maxDistance)
+    local root = Runtime.RootPart
+    if not root then return nil end
+
+    local maxDist = maxDistance or Config.FarmRadius
+    local bestEnemy = nil
+    local shortest = maxDist
+
+    local function ScanContainer(folder, filterByName)
+        if not folder then return end
+        for _, obj in ipairs(folder:GetChildren()) do
+            if obj:IsA("Model") and obj ~= Runtime.Character and not Players:GetPlayerFromCharacter(obj) then
+                local eHum = obj:FindFirstChildOfClass("Humanoid")
+                local eRoot = obj:FindFirstChild("HumanoidRootPart") or obj:FindFirstChild("Torso") or obj.PrimaryPart
+                if eHum and eRoot and eHum.Health > 0 then
+                    local nameMatch = (not filterByName) or (obj.Name:lower():find(filterByName:lower(), 1, true) ~= nil)
+                    if nameMatch then
+                        local d = (root.Position - eRoot.Position).Magnitude
+                        if d < shortest then
+                            shortest = d
+                            bestEnemy = obj
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    local enemiesFolder = Workspace:FindFirstChild("Enemies")
+    if enemiesFolder then
+        if preferredName then
+            ScanContainer(enemiesFolder, preferredName)
+        end
+        if not bestEnemy then
+            ScanContainer(enemiesFolder, nil)
+        end
+    end
+
+    -- Fallback: quét trực tiếp trong Workspace nếu folder Enemies trống hoặc khác tên
+    if not bestEnemy then
+        ScanContainer(Workspace, preferredName)
+        if not bestEnemy then
+            ScanContainer(Workspace, nil)
+        end
+    end
+
+    return bestEnemy
+end
+
+local function EquipWeapon()
+    local char = Runtime.Character
+    local hum = Runtime.Humanoid
+    if not char or not hum then return nil end
+
+    local currentTool = char:FindFirstChildOfClass("Tool")
+    if currentTool then return currentTool end
+
+    local backpack = LocalPlayer:FindFirstChild("Backpack")
+    if not backpack then return nil end
+
+    local priority = Config.StatPriority:lower()
+    if priority == "demon fruit" then priority = "fruit" end
+
+    for _, tool in ipairs(backpack:GetChildren()) do
+        if tool:IsA("Tool") then
+            local tip = tostring(tool.ToolTip or ""):lower()
+            local tName = tool.Name:lower()
+            if tip:find(priority, 1, true) or tName:find(priority, 1, true) then
+                hum:EquipTool(tool)
+                return tool
+            end
+        end
+    end
+
+    local fallbackTool = backpack:FindFirstChildOfClass("Tool")
+    if fallbackTool then
+        hum:EquipTool(fallbackTool)
+        return fallbackTool
+    end
+    return nil
+end
+
+local function PullNearbyMobs(centerPos, targetName)
+    if not Config.BringMobs then return end
+    local enemiesFolder = Workspace:FindFirstChild("Enemies") or Workspace
+    for _, mob in ipairs(enemiesFolder:GetChildren()) do
+        if mob:IsA("Model") and mob ~= Runtime.Character and not Players:GetPlayerFromCharacter(mob) then
+            local eHum = mob:FindFirstChildOfClass("Humanoid")
+            local eRoot = mob:FindFirstChild("HumanoidRootPart")
+            if eHum and eRoot and eHum.Health > 0 then
+                if (not targetName) or (mob.Name == targetName) then
+                    local dist = (eRoot.Position - centerPos).Magnitude
+                    if dist <= 180 then
+                        pcall(function()
+                            eRoot.CFrame = CFrame.new(centerPos)
+                            eRoot.CanCollide = false
+                            eRoot.Size = Vector3.new(45, 45, 45)
+                            eRoot.Transparency = 0.85
+                            if eHum:FindFirstChild("Animator") then
+                                eHum.Animator:Destroy()
+                            end
+                        end)
+                    end
+                end
+            end
+        end
+    end
+end
+
+local function PerformAttack(enemy)
+    local root = Runtime.RootPart
+    if not root or not enemy then return end
+    local eRoot = enemy:FindFirstChild("HumanoidRootPart") or enemy.PrimaryPart
+    if not eRoot then return end
+
+    local tool = EquipWeapon()
+
+    -- Giữ vị trí phía trên đầu mục tiêu và hướng mặt xuống mục tiêu
+    local hoverPos = eRoot.Position + Vector3.new(0, Config.HoverHeight, 0)
+    SmoothTweenTo(CFrame.new(hoverPos, eRoot.Position))
+
+    -- Gom quái cùng loại lại dưới chân
+    PullNearbyMobs(eRoot.Position, enemy.Name)
+
+    -- Mở rộng hitbox của mục tiêu hiện tại
+    pcall(function()
+        eRoot.Size = Vector3.new(45, 45, 45)
+        eRoot.CanCollide = false
+        eRoot.Transparency = 0.85
+    end)
+
+    -- Kích hoạt đòn đánh qua cả 3 tầng
+    if tool then
+        pcall(function() tool:Activate() end)
+    end
+    pcall(function()
+        VirtualUser:CaptureController()
+        VirtualUser:ClickButton1(Vector2.new(500, 500))
+    end)
+    -- Thử kích hoạt Combat Remote của Blox Fruits nếu tồn tại
+    pcall(function()
+        local rigEvent = ReplicatedStorage:FindFirstChild("RigControllerEvent")
+        if rigEvent and rigEvent:IsA("RemoteEvent") then
+            rigEvent:FireServer("weaponChange", tostring(tool and tool.Name or ""))
+            rigEvent:FireServer("hit", {eRoot}, 1, "")
+        end
+    end)
+end
+
+-- ================== 6. AUXILIARY FEATURES ==================
+local function RunAutoFarmStep()
+    if not Config.AutoFarm then return end
+    local root = Runtime.RootPart
+    if not root then return end
+
+    local targetMobName = nil
+    if Config.AutoQuest then
+        local questInfo = GetBestQuestForLevel()
+        if questInfo then
+            targetMobName = questInfo.Mob
+            if not IsQuestActive() and GetCommRemote() then
+                local distToNPC = (root.Position - questInfo.NPCPos).Magnitude
+                if distToNPC > 20 then
+                    SetStatus("Bay tới NPC nhận Quest: " .. questInfo.QuestName)
+                    SmoothTweenTo(CFrame.new(questInfo.NPCPos + Vector3.new(0, 5, 0)))
+                    return
+                else
+                    InvokeComm("StartQuest", questInfo.QuestName, questInfo.QuestLv)
+                end
+            end
+        end
+    end
+
+    local enemy = FindTargetEnemy(targetMobName, Config.FarmRadius)
+    if enemy then
+        local eRoot = enemy:FindFirstChild("HumanoidRootPart") or enemy.PrimaryPart
+        if eRoot then
+            local dist = (root.Position - eRoot.Position).Magnitude
+            if dist > 35 then
+                SetStatus(string.format("Bay tới [%s] (%dm)", enemy.Name, math.floor(dist)))
+                SmoothTweenTo(CFrame.new(eRoot.Position + Vector3.new(0, Config.HoverHeight, 0)))
+            else
+                SetStatus(string.format("Đang đánh [%s] (HP: %d)", enemy.Name, math.floor(enemy.Humanoid.Health)))
+                PerformAttack(enemy)
+            end
+        end
+    else
+        SetStatus("Đang quét tìm quái quanh bản đồ...")
+    end
+end
+
+local function RunAutoStats()
+    if not Config.AutoStats then return end
+    local data = LocalPlayer:FindFirstChild("Data")
+    local pts = data and data:FindFirstChild("Points")
+    if pts and pts.Value > 0 then
+        InvokeComm("AddPoint", Config.StatPriority, math.min(pts.Value, 3))
+    end
+end
+
+local function RunAutoHaki()
+    if not Config.AutoHaki or not Runtime.Character then return end
+    if not Runtime.Character:FindFirstChild("HasBuso") then
+        InvokeComm("Buso")
+    end
+end
+
+local function RunAutoBuy()
+    if not Config.AutoBuy then return end
+    InvokeComm("BuyItem", Config.BuyItem)
+end
+
+local function RunAutoRaid()
+    if not Config.AutoRaid or Runtime.RaidBusy then return end
+    Runtime.RaidBusy = true
+    task.spawn(function()
+        pcall(function()
+            InvokeComm("RaidsNpc", "Select", Config.RaidType)
+            task.wait(0.8)
+            InvokeComm("RaidsNpc", "Start")
+        end)
+        task.wait(5)
+        Runtime.RaidBusy = false
+    end)
+end
+
+local function TeleportToIsland(islandName)
+    local pos = GameData.Islands[islandName]
+    if not pos then
+        Notify("Teleport", "Không tìm thấy đảo: " .. tostring(islandName), 2)
+        return
+    end
+    Runtime.IsTeleporting = true
+    SetStatus("Đang dịch chuyển tới: " .. islandName)
+    Notify("Teleport", "Đang bay tới " .. islandName .. "...", 3)
+    SmoothTweenTo(CFrame.new(pos), function()
+        Runtime.IsTeleporting = false
+        SetStatus("Đã tới " .. islandName)
+        Notify("Teleport", "Đã đến " .. islandName .. "!", 2)
+    end)
+end
+
+-- ================== 7. UNLIMITED BILLBOARD ESP SYSTEM ==================
+local function ClearAllESP()
+    for obj, gui in pairs(Runtime.ESPItems) do
+        if gui and gui.Parent then
+            gui:Destroy()
+        end
+        Runtime.ESPItems[obj] = nil
+    end
+end
+
+local function CreateESPBadge(adorneePart, titleText, color)
+    local bb = Instance.new("BillboardGui")
+    bb.Name = "VantaESPBadge"
+    bb.Adornee = adorneePart
+    bb.Size = UDim2.new(0, 160, 0, 36)
+    bb.StudsOffset = Vector3.new(0, 3.5, 0)
+    bb.AlwaysOnTop = true
+    bb.Parent = Runtime.ESPFolder or Runtime.ScreenGui
+
+    local label = Instance.new("TextLabel")
+    label.Name = "InfoLabel"
+    label.Size = UDim2.new(1, 0, 1, 0)
+    label.BackgroundTransparency = 1
+    label.TextColor3 = color
+    label.TextStrokeTransparency = 0.2
+    label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+    label.Font = Enum.Font.GothamBold
+    label.TextSize = 12
+    label.Text = titleText
+    label.Parent = bb
+
+    return bb
+end
+
+local function RefreshESP()
+    if not (Config.ESPPlayers or Config.ESPMobs or Config.ESPFruits) then
+        ClearAllESP()
+        return
+    end
+
+    local myRoot = Runtime.RootPart
+    if not myRoot then return end
+
+    local activeTargets = {}
+
+    local function ProcessTarget(keyObj, part, nameStr, hum, color)
+        if not part then return end
+        activeTargets[keyObj] = true
+        local dist = math.floor((myRoot.Position - part.Position).Magnitude)
+        local hpText = ""
+        if hum and hum.MaxHealth > 0 then
+            hpText = string.format(" [%d%%]", math.floor((hum.Health / hum.MaxHealth) * 100))
+        end
+        local display = string.format("%s%s\n[%dm]", nameStr, hpText, dist)
+
+        local badge = Runtime.ESPItems[keyObj]
+        if not badge or not badge.Parent then
+            badge = CreateESPBadge(part, display, color)
+            Runtime.ESPItems[keyObj] = badge
+        else
+            local lbl = badge:FindFirstChild("InfoLabel")
+            if lbl then
+                lbl.Text = display
+                lbl.TextColor3 = color
+            end
+        end
+    end
+
+    -- 1. Player ESP
+    if Config.ESPPlayers then
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= LocalPlayer and plr.Character then
+                local pRoot = plr.Character:FindFirstChild("HumanoidRootPart")
+                local pHum = plr.Character:FindFirstChildOfClass("Humanoid")
+                if pRoot and pHum and pHum.Health > 0 then
+                    ProcessTarget(plr.Character, pRoot, "⚡ " .. plr.Name, pHum, Color3.fromRGB(0, 230, 255))
+                end
+            end
+        end
+    end
+
+    -- 2. Mob ESP
+    if Config.ESPMobs then
+        local eFolder = Workspace:FindFirstChild("Enemies") or Workspace
+        for _, mob in ipairs(eFolder:GetChildren()) do
+            if mob:IsA("Model") and mob ~= Runtime.Character and not Players:GetPlayerFromCharacter(mob) then
+                local mRoot = mob:FindFirstChild("HumanoidRootPart")
+                local mHum = mob:FindFirstChildOfClass("Humanoid")
+                if mRoot and mHum and mHum.Health > 0 then
+                    ProcessTarget(mob, mRoot, "⚔ " .. mob.Name, mHum, Color3.fromRGB(255, 95, 110))
+                end
+            end
+        end
+    end
+
+    -- 3. Fruit / Tool ESP
+    if Config.ESPFruits then
+        for _, item in ipairs(Workspace:GetChildren()) do
+            if item:IsA("Tool") or item.Name:lower():find("fruit") then
+                local handle = item:FindFirstChild("Handle") or item:FindFirstChildWhichIsA("BasePart")
+                if handle then
+                    ProcessTarget(item, handle, "🍎 " .. item.Name, nil, Color3.fromRGB(255, 215, 0))
+                end
+            end
+        end
+    end
+
+    -- Dọn dẹp đối tượng đã biến mất hoặc tắt toggle
+    for obj, badge in pairs(Runtime.ESPItems) do
+        if not activeTargets[obj] or not obj.Parent then
+            if badge then badge:Destroy() end
+            Runtime.ESPItems[obj] = nil
+        end
+    end
+end
+
+-- ================== 8. ANTI-AFK HOOK ==================
+TrackConnection(LocalPlayer.Idled:Connect(function()
+    if Config.AntiAFK and Runtime.Active then
+        pcall(function()
+            VirtualUser:CaptureController()
+            VirtualUser:ClickButton2(Vector2.new())
+        end)
+    end
+end))
+
+-- ================== 9. REVERSE PATH (CLEAN UNLOAD) ==================
+local function UnloadAll()
+    if not Runtime.Active then return end
+    Runtime.Active = false
+
+    CancelActiveTween()
+    SetFlightLock(false)
+    ClearAllESP()
+
+    for _, conn in ipairs(Runtime.Connections) do
+        if conn and conn.Connected then
+            conn:Disconnect()
+        end
+    end
+    table.clear(Runtime.Connections)
+
+    if Runtime.ScreenGui and Runtime.ScreenGui.Parent then
+        Runtime.ScreenGui:Destroy()
+    end
+
+    Notify("VANTA UI", "Đã ngắt toàn bộ tiến trình & thu hồi GUI.", 3)
+end
+
+-- ================== 10. CYBER-GLASS MULTI-TAB GUI ==================
+local function BuildCyberGUI()
+    local guiParent = PlayerGui
+    pcall(function()
+        if CoreGui and CoreGui:FindFirstChild("RobloxGui") then
+            guiParent = CoreGui
+        end
+    end)
+
+    local existing = guiParent:FindFirstChild("VantaCyberDashboard") or PlayerGui:FindFirstChild("VantaCyberDashboard")
+    if existing then existing:Destroy() end
+
+    local ScreenGui = Instance.new("ScreenGui")
+    ScreenGui.Name = "VantaCyberDashboard"
+    ScreenGui.ResetOnSpawn = false
+    ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    ScreenGui.Parent = guiParent
+    Runtime.ScreenGui = ScreenGui
+
+    local ESPFolder = Instance.new("Folder")
+    ESPFolder.Name = "VantaESPContainer"
+    ESPFolder.Parent = ScreenGui
+    Runtime.ESPFolder = ESPFolder
+
+    -- Nút Floating Pill để bật/tắt nhanh Menu (Hỗ trợ cả PC & Mobile)
+    local FloatBtn = Instance.new("TextButton")
+    FloatBtn.Name = "FloatToggle"
+    FloatBtn.Size = UDim2.new(0, 52, 0, 26)
+    FloatBtn.Position = UDim2.new(0, 16, 0.5, -13)
+    FloatBtn.BackgroundColor3 = Color3.fromRGB(16, 18, 26)
+    FloatBtn.Text = "VANTA"
+    FloatBtn.TextColor3 = Color3.fromRGB(0, 225, 255)
+    FloatBtn.Font = Enum.Font.GothamBlack
+    FloatBtn.TextSize = 11
+    FloatBtn.Parent = ScreenGui
+    Instance.new("UICorner", FloatBtn).CornerRadius = UDim.new(1, 0)
+    local FloatStroke = Instance.new("UIStroke", FloatBtn)
+    FloatStroke.Color = Color3.fromRGB(0, 210, 255)
+    FloatStroke.Thickness = 1.5
+
+    -- Main Window
+    local MainFrame = Instance.new("Frame")
+    MainFrame.Name = "MainWindow"
+    MainFrame.Size = UDim2.new(0, 520, 0, 350)
+    MainFrame.Position = UDim2.new(0.5, -260, 0.5, -175)
+    MainFrame.BackgroundColor3 = Color3.fromRGB(14, 15, 22)
+    MainFrame.BorderSizePixel = 0
+    MainFrame.ClipsDescendants = true
+    MainFrame.Parent = ScreenGui
+    Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 12)
+
+    local OuterStroke = Instance.new("UIStroke", MainFrame)
+    OuterStroke.Thickness = 1.5
+    OuterStroke.Color = Color3.fromRGB(255, 255, 255)
+    local StrokeGrad = Instance.new("UIGradient", OuterStroke)
+    StrokeGrad.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(0, 225, 255)),
+        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(120, 70, 255)),
